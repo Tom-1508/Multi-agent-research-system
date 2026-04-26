@@ -1,14 +1,29 @@
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from tools import web_search, scrape_url
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
+def _resolve_google_api_key() -> str:
+    # Accept either name so existing .env files keep working.
+    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "Missing Google API key. Set GOOGLE_API_KEY (or GEMINI_API_KEY) in your .env file."
+        )
+    return api_key
+
+
 # model setup
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0,
+    google_api_key=_resolve_google_api_key(),
+)
 
 
 # first agent
@@ -49,7 +64,7 @@ writer_chain = writer_prompt | llm | StrOutputParser()
 
 # critic chain 
 
-critic_prompt = ChatPromptTemplate([
+critic_prompt = ChatPromptTemplate.from_messages([
      ("system", "You are a sharp and constructive research critic. Be honest and specific."),
     ("human", """Review the research report below and evaluate it strictly.
 
