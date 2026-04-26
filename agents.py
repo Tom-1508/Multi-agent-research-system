@@ -5,40 +5,66 @@ from langchain_core.output_parsers import StrOutputParser
 from tools import web_search, scrape_url
 from dotenv import load_dotenv
 import os
+from typing import Optional
 
 load_dotenv()
+
+
+class ConfigError(RuntimeError):
+    """Raised when required runtime configuration is missing or invalid."""
+
 
 def _resolve_google_api_key() -> str:
     # Accept either name so existing .env files keep working.
     api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError(
+        raise ConfigError(
             "Missing Google API key. Set GOOGLE_API_KEY (or GEMINI_API_KEY) in your .env file."
         )
     return api_key
 
 
-# model setup
-llm = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
-    google_api_key=_resolve_google_api_key(),
-)
+_llm: Optional[ChatGoogleGenerativeAI] = None
+
+
+def get_llm() -> ChatGoogleGenerativeAI:
+    """Lazily initialize the LLM so callers can handle config/runtime failures gracefully."""
+    global _llm
+    if _llm is not None:
+        return _llm
+
+    try:
+        _llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            temperature=0,
+            google_api_key=_resolve_google_api_key(),
+        )
+        return _llm
+    except Exception as exc:
+        raise RuntimeError(
+            "Failed to initialize Gemini model client. Check API key, model name, and network access."
+        ) from exc
 
 
 # first agent
 def build_search_agent():
-    return create_agent(
-        model=llm,
-        tools=[web_search]
-    )
+    try:
+        return create_agent(
+            model=get_llm(),
+            tools=[web_search]
+        )
+    except Exception as exc:
+        raise RuntimeError("Failed to build Search Agent.") from exc
 
 # second agent
 def build_reader_agent():
-    return create_agent(
-        model=llm,
-        tools=[scrape_url]
-    )
+    try:
+        return create_agent(
+            model=get_llm(),
+            tools=[scrape_url]
+        )
+    except Exception as exc:
+        raise RuntimeError("Failed to build Reader Agent.") from exc
     
 # writer chain (LCEl pipeline)
 
@@ -60,7 +86,11 @@ writer_prompt = ChatPromptTemplate.from_messages([
     Be detailed, factual and professional."""),
 ])
 
-writer_chain = writer_prompt | llm | StrOutputParser()
+def build_writer_chain():
+    try:
+        return writer_prompt | get_llm() | StrOutputParser()
+    except Exception as exc:
+        raise RuntimeError("Failed to build Writer Chain.") from exc
 
 # critic chain 
 
@@ -87,4 +117,8 @@ critic_prompt = ChatPromptTemplate.from_messages([
     ..."""),
 ])
 
-critic_chain = critic_prompt | llm | StrOutputParser()
+def build_critic_chain():
+    try:
+        return critic_prompt | get_llm() | StrOutputParser()
+    except Exception as exc:
+        raise RuntimeError("Failed to build Critic Chain.") from exc
