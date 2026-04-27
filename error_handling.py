@@ -6,6 +6,8 @@ def _extract_retry_seconds(text: str) -> int | None:
         r"retry in\s+(\d+(?:\.\d+)?)s",
         r"retrydelay['\"]?\s*:\s*['\"]?(\d+)(?:\.\d+)?s['\"]?",
         r"Please retry in\s+(\d+(?:\.\d+)?)s",
+        r"retry-after:\s*(\d+)",          # Mistral uses this header
+        r"retry after (\d+) seconds",
     ]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
@@ -22,31 +24,47 @@ def normalize_llm_error(exc: Exception) -> str:
     text = raw.lower()
     retry_seconds = _extract_retry_seconds(raw)
 
-    if "resource_exhausted" in text or "quota exceeded" in text or "429" in text:
-        if "free_tier" in text or "perday" in text or "per_day" in text:
+    # ── Rate limit / quota ──────────────────────────────────────────────────
+    if "rate_limit" in text or "rate limit" in text or "429" in text or \
+       "resource_exhausted" in text or "quota exceeded" in text or \
+       "too many requests" in text:
+
+        if "free" in text or "trial" in text or "per_day" in text or "perday" in text:
             msg = (
-                "Gemini quota exceeded for current plan (free-tier daily limit reached). "
-                "Wait for quota reset or upgrade billing/plan."
+                "Mistral API daily quota exceeded (free-tier limit reached). "
+                "Wait for the quota reset or upgrade your plan at console.mistral.ai."
             )
         else:
-            msg = "Gemini rate limit reached."
+            msg = "Mistral API rate limit reached."
 
         if retry_seconds is not None:
             msg += f" Retry after about {retry_seconds} seconds."
         return msg
 
-    if "api key expired" in text or "api_key_invalid" in text or "api key invalid" in text:
+    # ── Auth / key problems ─────────────────────────────────────────────────
+    if "401" in text or "unauthorized" in text or \
+       "api key" in text and ("invalid" in text or "expired" in text or "missing" in text):
         return (
-            "Gemini API key is invalid or expired. Generate a new key and set "
-            "GOOGLE_API_KEY (or GEMINI_API_KEY) in .env."
+            "Mistral API key is invalid, expired, or missing. "
+            "Set MISTRAL_API_KEY in your .env file. "
+            "Generate a new key at console.mistral.ai."
         )
 
-    if "unexpected model name format" in text or "generatecontentrequest.model" in text:
+    # ── Model name problems ─────────────────────────────────────────────────
+    if "model" in text and ("not found" in text or "invalid" in text or "does not exist" in text):
         return (
-            "Invalid Gemini model name format. Use API model IDs such as "
-            "'gemini-2.5-flash' (not display names)."
+            "Invalid Mistral model name. Use IDs like 'mistral-large-latest', "
+            "'mistral-small-latest', or 'open-mistral-7b'."
         )
 
+    # ── Context / token limit ───────────────────────────────────────────────
+    if "context" in text and "length" in text or "token" in text and "limit" in text:
+        return (
+            "Request exceeds the model's token limit. "
+            "Reduce the amount of research text passed to the writer/critic chain."
+        )
+
+    # ── Fallback ────────────────────────────────────────────────────────────
     return raw
 
 

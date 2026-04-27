@@ -1,5 +1,5 @@
 from langchain.agents import create_agent
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_mistralai import ChatMistralAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from tools import web_search, scrape_url
@@ -12,41 +12,53 @@ load_dotenv()
 
 class ConfigError(RuntimeError):
     """Raised when required runtime configuration is missing or invalid."""
+    pass
 
 
-def _resolve_google_api_key() -> str:
-    # Accept either name so existing .env files keep working.
-    api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+def _resolve_mistral_api_key() -> str:
+    """
+    Fetch Mistral API key from environment variables.
+    """
+    api_key = os.getenv("MISTRAL_API_KEY")
+
     if not api_key:
         raise ConfigError(
-            "Missing Google API key. Set GOOGLE_API_KEY (or GEMINI_API_KEY) in your .env file."
+            "Missing MISTRAL_API_KEY. Set it in your .env file or Streamlit secrets."
         )
+
     return api_key
 
 
-_llm: Optional[ChatGoogleGenerativeAI] = None
+# Global cached LLM instance
+_llm: Optional[ChatMistralAI] = None
 
 
-def get_llm() -> ChatGoogleGenerativeAI:
-    """Lazily initialize the LLM so callers can handle config/runtime failures gracefully."""
+def get_llm() -> ChatMistralAI:
+    """
+    Lazily initialize Mistral LLM.
+    Prevents multiple reinitializations.
+    """
     global _llm
+
     if _llm is not None:
         return _llm
 
     try:
-        _llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+        _llm = ChatMistralAI(
+            model="mistral-large-latest",
             temperature=0,
-            google_api_key=_resolve_google_api_key(),
+            mistral_api_key=_resolve_mistral_api_key(),
         )
         return _llm
+
     except Exception as exc:
         raise RuntimeError(
-            "Failed to initialize Gemini model client. Check API key, model name, and network access."
+            "Failed to initialize Mistral model client. Check API key, model access, and network."
         ) from exc
 
 
-# first agent
+# ---------------- SEARCH AGENT ----------------
+
 def build_search_agent():
     try:
         return create_agent(
@@ -56,7 +68,9 @@ def build_search_agent():
     except Exception as exc:
         raise RuntimeError("Failed to build Search Agent.") from exc
 
-# second agent
+
+# ---------------- READER AGENT ----------------
+
 def build_reader_agent():
     try:
         return create_agent(
@@ -65,26 +79,36 @@ def build_reader_agent():
         )
     except Exception as exc:
         raise RuntimeError("Failed to build Reader Agent.") from exc
-    
-# writer chain (LCEl pipeline)
+
+
+# ---------------- WRITER CHAIN ----------------
 
 writer_prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are an expert research writer. Write clear, structured and insightful reports."),
-    ("human", """Write a detailed research report on the topic below.
+    (
+        "system",
+        "You are an expert research writer. Write clear, structured and insightful reports."
+    ),
+    (
+        "human",
+        """
+Write a detailed research report on the topic below.
 
-    Topic: {topic}
+Topic: {topic}
 
-    Research Gathered:
-    {research}
+Research Gathered:
+{research}
 
-    Structure the report as:
-    - Introduction
-    - Key Findings (minimum 3 well-explained points)
-    - Conclusion
-    - Sources (list all URLs found in the research)
+Structure the report as:
+- Introduction
+- Key Findings (minimum 3 well-explained points)
+- Conclusion
+- Sources (list all URLs found in the research)
 
-    Be detailed, factual and professional."""),
+Be detailed, factual, and professional.
+"""
+    ),
 ])
+
 
 def build_writer_chain():
     try:
@@ -92,30 +116,40 @@ def build_writer_chain():
     except Exception as exc:
         raise RuntimeError("Failed to build Writer Chain.") from exc
 
-# critic chain 
+
+# ---------------- CRITIC CHAIN ----------------
 
 critic_prompt = ChatPromptTemplate.from_messages([
-     ("system", "You are a sharp and constructive research critic. Be honest and specific."),
-    ("human", """Review the research report below and evaluate it strictly.
+    (
+        "system",
+        "You are a sharp and constructive research critic. Be honest and specific."
+    ),
+    (
+        "human",
+        """
+Review the research report below and evaluate it strictly.
 
-    Report:
-    {report}
+Report:
+{report}
 
-    Respond in this exact format:
+Respond in this exact format:
 
-    Score: X/10
+Score: X/10
 
-    Strengths:
-    - ...
-    - ...
+Strengths:
+- ...
+- ...
 
-    Areas to Improve:
-    - ...
-    - ...
+Areas to Improve:
+- ...
+- ...
 
-    One line verdict:
-    ..."""),
+One line verdict:
+...
+"""
+    ),
 ])
+
 
 def build_critic_chain():
     try:

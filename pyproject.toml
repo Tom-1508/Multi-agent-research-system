@@ -25,4 +25,5 @@ dependencies = [
     "html5lib>=1.1",
     "langchain-google-genai>=4.2.2",
     "streamlit>=1.56.0",
+    "langchain-mistralai>=1.1.2",
 ]
